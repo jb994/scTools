@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
-#from scTools.preprocess import preprocess as prp
 import scanpy as sc
+import scipy.sparse.linalg
 from scanpy.pp import filter_cells, filter_genes, normalize_total, log1p, highly_variable_genes
 
 def fullFilterShebang(adata, 
@@ -21,6 +21,7 @@ def fullFilterShebang(adata,
 	print(f"After cell and gene filtering we have {adata.shape}")
 	sc.pp.scale(adata, max_value=10)
 	return adata
+
 
 def fullEmbedShebang(adata, n_components=50, plot=True):
 	doPCA(adata, n_components=n_components, plot=plot)
@@ -43,6 +44,16 @@ def mitoFilter(adata,plot=True):
 	adata = adata[adata.obs.n_genes_by_counts < 2500, :]
 	return adata
 
+def riboFilter(adata,plot=True):
+	adata.var['ribo'] = adata.var_names.str.startswith(("Rps","Rpl"))
+	sc.pp.calculate_qc_metrics(adata, qc_vars=['ribo'], percent_top=None, log1p=False, inplace=True)
+	if plot: sc.pl.violin(adata, ['n_genes_by_counts', 'total_counts', 'pct_counts_ribo'],
+             jitter=0.4, multi_panel=True)
+	adata = adata[adata.obs.pct_counts_ribo > 5, :]
+	adata = adata[adata.obs.n_genes_by_counts < 2500, :]
+	return adata
+
+
 def bloodFilter(adata, plot=True):
 	adata.var['blood'] = adata.var_names.str.startswith('Hbb-' or 'Hba-')
 	sc.pp.calculate_qc_metrics(adata, qc_vars=['blood'], percent_top=None, log1p=False, inplace=True)
@@ -55,7 +66,7 @@ def logNorm(adata):
 	normalize_total(adata)
 	log1p(adata)
 
-def hvg(adata, flavor='seurat', selectGenes=800, plot=True):
+def hvg(adata, flavor='seurat', selectGenes=1000, plot=True):
 	if flavor!='seurat_v3':
 		highly_variable_genes(adata, flavor=flavor, min_mean=0.0125, max_mean=3, min_disp=0.5)
 	else:
@@ -64,11 +75,17 @@ def hvg(adata, flavor='seurat', selectGenes=800, plot=True):
 	adata = adata[:, adata.var.highly_variable]
 	return adata
 
-def doPCA(adata, n_components=50, plot=True):
+def doPCA(adata, n_components=50, plot=True, inplace=True):
+	if 'highly_variable' not in adata.var: 
+		highly_variable_genes(adata, flavor='seurat_v3', n_top_genes=4000)
 	sc.tl.pca(adata, n_comps=n_components, use_highly_variable=True)
 	if plot: sc.pl.pca_variance_ratio(adata, n_pcs=n_components, log=True)
+	if not inplace: return adata
 
-def umapify(adata, plot=True, color=None, legend_loc=None):
+def umapify(adata, plot=True, color=None, title='batch', legend_loc='right margin', redoPCA=False):
+	if redoPCA: adata=doPCA(adata, inplace=False)
 	sc.pp.neighbors(adata, n_neighbors=15, n_pcs=40)
 	sc.tl.umap(adata)
-	if plot: sc.pl.umap(adata, color=color, legend_loc='on data')
+	if plot: sc.pl.umap(adata, color=color, title=title, legend_loc=legend_loc)
+
+
