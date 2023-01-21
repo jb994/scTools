@@ -41,6 +41,7 @@ def rankCellTypes(Data, treatments, silent=False, heatmap=True, key='fineCluster
 				print(f"{t1} x {t2}")
 				cols.append(f"{t1} x {t2}")
 				bigData = process.catAdata(Data, [t1,t2])
+				
 				sc.pp.normalize_per_cell(bigData, counts_per_cell_after=1e4)
 				sc.pp.log1p(bigData)
 				sc.tl.pca(bigData, n_comps=50)
