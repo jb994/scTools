@@ -111,26 +111,8 @@ def tablize(adata, index=None, treatment=None, cellType=None, counts=False):
     cols = []
     if treatment is not None:
         arr, cols, treatment = formatTreatment(arr, cols, treatment)
-        '''
-        if type(treatment) == list:
-            cols.append('treatment')
-            arr = np.vstack((arr, [f"{treatment[0]} x {treatment[1]}"] * arr.shape[1]))
-            cols.append('baseTreatment')
-            arr = np.vstack((arr, [treatment[0]] * arr.shape[1]))
-            cols.append('contrastTreatment')
-            arr = np.vstack((arr, [treatment[1]] * arr.shape[1]))
-        elif type(treatment) == str:
-            cols.append('treatment')
-            treatment = [treatment] * arr.shape[1]
-            arr = np.vstack((arr, treatment))
-        '''
-
     if cellType is not None:
         arr, cols = formatCellType(arr, cols, cellType)
-        '''
-        cols.append('cellType')
-        arr = np.vstack((arr, [cellType] * arr.shape[1]))
-        '''
 
     for k in adata.uns['rank_genes_groups'].keys():
         if k != 'params':
@@ -139,15 +121,12 @@ def tablize(adata, index=None, treatment=None, cellType=None, counts=False):
                 cols.append('genes')
             else:
                 cols.append(k)
-
     if counts:
         for t in treatment:
             cols.append(t)
             for gene in adata.uns['rank_genes_groups']['names'][adata.obs['batch'][-1]]:
                 meanCounts.append(np.mean(adata[(adata.obs['batch'] == t, gene)].X))
-
         arr = np.vstack((arr, meanCounts))
-
     if index:
         index = adata.uns['rank_genes_groups']['names'][adata.obs['batch'][-1]]
     return pd.DataFrame((arr.T), index=index, columns=cols)
@@ -199,14 +178,17 @@ def getDEGsForCellType(adata, treat1, treat2, obsKey, celltype):
     dgeDF = tablize(cellTypeAdata, index=True, treatment=[treat1,treat2], cellType=celltype, counts=False)
     return dgeDF
 
+###################################################################################################
+###################################################################################################
+###################################################################################################
 
 def addReadCounts(dgeDF, combinedData, treatments, obsKey='fineClusters'):
     ### Adds the read counts for each treatment for each cellType into a dge matrix
     ### Also adds the number of cells for each cellType
-    for i,t in enumerate(treatments):
-        print(f"\nOn treatment {t}")
+    for i,treat in enumerate(treatments):
+        print(f"\nOn treatment {treat}")
     
-        adata = combinedData[combinedData.obs['batch']==t]
+        adata = combinedData[combinedData.obs['batch']==treat]
         col=[]
         col2=[]
         
@@ -215,38 +197,12 @@ def addReadCounts(dgeDF, combinedData, treatments, obsKey='fineClusters'):
         
         print("Making meanMatrixDF")
         meanMatrixDF = makeAvgReadDF(dgeDF, adata, obsKey)
-        '''
-        arr=[]
-        for cluster in np.unique(otherDF['cellType']):
-            if cluster in np.unique(adata.obs[f'{depth}Clusters']):
-                arr.append(np.asarray(adata[adata.obs[f'{depth}Clusters']==cluster].X.mean(axis=0))[0])
-            else:
-                arr.append([np.nan]*otherDF.shape[1])
-        meanMatrixDF = pd.DataFrame(arr, index=np.unique(otherDF['cellType']), columns=adata.var.index)
-        '''
         
         print("Making cellMatrix")
         cellCountDF = getCellCounts(dgeDF, adata, obsKey)
-        '''
-        cellCounts=[]
-        for cluster in np.unique(otherDF['cellType']):
-            cellCounts.append(adata[adata.obs[f'{depth}Clusters']==cluster].shape[0])
-        cellCountDF = pd.DataFrame(cellCounts, index=np.unique(otherDF['cellType']), columns=['cellCounts'])
-        '''   
         
         print("Appending reads to DF")
-        dgeDF = appendReadsDF(dgeDF, meanMatrixDF, cellCountDF)
-        '''
-        col1 = []
-        col2 = []
-        for index, row in df.iterrows():
-            cluster = row['cellType']
-            gene = row['genes']
-            col1.append(meanMatrixDF.loc[cluster, gene])
-            col2.append(cellCountDF.loc[cluster,'cellCounts'])
-        df[f'{t}_AvgReadsPerCell']=col1
-        df[f'{t}_NumCells']=col2
-        '''
+        dgeDF = appendReadsDF(dgeDF, meanMatrixDF, cellCountDF, treat)
         
         adata.X=np.log1p(adata.X)
         
@@ -274,7 +230,7 @@ def getCellCounts(df, adata, obsKey='fineClusters'):
     cellCountDF = pd.DataFrame(cellCounts, index=np.unique(df['cellType']), columns=['cellCounts'])
     return cellCountDF
 
-def appendReadsDF(df, meanMatrixDF, cellCountDF):
+def appendReadsDF(df, meanMatrixDF, cellCountDF, treat):
     col1 = []
     col2 = []
     for index, row in df.iterrows():
@@ -282,10 +238,42 @@ def appendReadsDF(df, meanMatrixDF, cellCountDF):
         gene = row['genes']
         col1.append(meanMatrixDF.loc[cluster, gene])
         col2.append(cellCountDF.loc[cluster,'cellCounts'])
-    df[f'{t}_AvgReadsPerCell']=col1
-    df[f'{t}_NumCells']=col2
+    df[f'{treat}_AvgReadsPerCell']=col1
+    df[f'{treat}_NumCells']=col2
     return df
+###################################################################################################
+###################################################################################################
+###################################################################################################
+###Functions to calculate the number of Differentially Expressed Genes (DEGs) between treatments###
+def filterDEGs(DGEDF, t1, t2, pvalThreshold=0.1, lfThreshold = 1.0):
+    sigDF = DGEDF[DGEDF.pvals<=pvalThreshold]
+    sigDF = sigDF[np.abs(sigDF.logfoldchanges)>lfThreshold]
+    sigDF = sigDF[sigDF['baseTreatment'] == t1]
+    sigDF = sigDF[sigDF['contrastTreatment'] == t2]
+    for i,t in enumerate(treatments):
+        avgMask=(sigDF[t+'_AvgReadsPerCell']>0)
+        mask = (sigDF['baseTreatment'] != t)
+        sigDF = sigDF[(mask)|(avgMask)]
+        mask = (sigDF['contrastTreatment'] != t)
+        sigDF = sigDF[(mask)|(avgMask)]
+    return sigDF
 
+def numDEGs(DGEDF, t1, t2, cellTypes=None, doFilter=True):
+    if cellTypes is None:
+        cellTypes = np.unique(DGEDF['cellType'])
+    if doFilter:
+        DGEDF = filterDEGs(DGEDF, t1, t2)
+    DEGNumbers = []
+    for cellType in cellTypes:
+        numDEGs = sigDF[sigDF['cellType']==cellType].shape[0]
+        DEGNumbers.append(numDEGs)
+    return DEGNumbers
+
+
+
+###################################################################################################
+###################################################################################################
+###################################################################################################
 
 def enrich(glist, species='Mouse', analyses=None, treatment='', title_suffix='', return_df=False):
     if analyses == None:

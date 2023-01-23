@@ -5,9 +5,13 @@ from scTools import process
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 
+import warnings
+from anndata import ImplicitModificationWarning
+warnings.filterwarnings("ignore", category=ImplicitModificationWarning)
+
 def makeSpreadsheet(df, filename="pandas_test.xlsx", sheetKey = 'cellType', sortKey=None ):
-	### Given a df and a sheetKey, will create an excell spreadsheet where each sheet\
-	### is for each unique vaue in the sheetKey column
+	### Given a df and a sheetKey, will create an excel spreadsheet where each sheet\
+	### is for each unique value in the sheetKey column
 	wb = Workbook()
 	ws1 = wb.active
 	ws1.title = "All"
