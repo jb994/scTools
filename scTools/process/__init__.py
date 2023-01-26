@@ -1,6 +1,7 @@
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 import anndata as ad
 import scanpy as sc
 import gseapy
@@ -99,10 +100,19 @@ def catAdata(adataDict, keys, obsKey=None, obsVal=None, normReads=False, combat=
     return adata
 
 
-def dgeNorm(adata):
-    adata = adata.raw.to_adata()
+def dgeNorm(adata, useRaw=True, scale=False, pca=False, n_comps=50):
+    if useRaw:
+        adata = adata.raw.to_adata()
     sc.pp.normalize_total(adata)
     sc.pp.log1p(adata)
+    if scale:
+        if adata.shape[1]>7500:
+            sc.pp.highly_variable_genes(adata, min_mean=0.0125, max_mean=3, min_disp=0.5)
+            #sc.pp.highly_variable_genes(adata, flavor='seurat_v3', n_top_genes=4000)
+            adata=adata[:,adata.var.highly_variable]
+        sc.pp.scale(adata)
+    if pca:
+        sc.tl.pca(adata, n_comps=n_comps)
     return adata
 
 
@@ -274,6 +284,38 @@ def numDEGs(DGEDF, t1, t2, cellTypes=None, doFilter=True):
 ###################################################################################################
 ###################################################################################################
 ###################################################################################################
+### Perform Pathway Enrichment Analysis on a given adata ###
+
+def enrichAllCellTypes(adata, t1, t2, analysis, comparison, obsKey='fineClusters', savePics=False):
+    df = []
+    cellTypes = sorted(( set(np.unique(adata[adata.obs['batch']==t2].obs[obsKey])) & set(np.unique(adata[adata.obs['batch']==t1].obs[obsKey]) )))
+    for cellType in cellTypes:
+        print(cellType)
+        tempAdata = adata[adata.obs[obsKey]==cellType]
+        sc.tl.rank_genes_groups(tempAdata, 'batch', groups=[t2], reference=t1, use_raw=False, method='wilcoxon', max_iter=2000, pts=False, key_added = "wilcoxon")
+        glist = sc.get.rank_genes_groups_df(tempAdata, group=t2, 
+                                            key='wilcoxon', log2fc_min=0.25, 
+                                            pval_cutoff=0.01)['names'].squeeze()
+        if type(glist)!=str:
+            glist = glist.str.strip().tolist()
+        else:
+              glist=[glist]
+
+        if len(glist)>0:
+            print(len(glist))
+            result = enrich(glist, analyses=analysis, treatment=comparison, title_suffix='_'+cellType, return_df=True)[0]
+            if savePics:
+                plt.savefig(f"images/{comparison}_{cellType}_{analysis}.png", bbox_inches='tight')
+            plt.show()
+            result = result[result['Adjusted P-value']<0.1]
+            result['Cell Type'] = [cellType]*result.shape[0]
+            result = result[['Gene_set','Cell Type', 'Term','Overlap','Adjusted P-value','Genes']]
+
+            df.append(result)
+        else:
+            print("No sig. genes")
+
+    return df
 
 def enrich(glist, species='Mouse', analyses=None, treatment='', title_suffix='', return_df=False):
     if analyses == None:
@@ -293,3 +335,5 @@ def enrich(glist, species='Mouse', analyses=None, treatment='', title_suffix='',
         dfs.append(enr_res.results)
     if return_df:
         return dfs
+
+
