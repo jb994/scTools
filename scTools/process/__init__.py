@@ -100,16 +100,21 @@ def catAdata(adataDict, keys, obsKey=None, obsVal=None, normReads=False, combat=
     return adata
 
 
-def dgeNorm(adata, useRaw=True, scale=False, pca=False, n_comps=50):
+def dgeNorm(adata, useRaw=True, log=True, scale=False, reduceForScale=True, pca=False, n_comps=50):
     if useRaw:
         adata = adata.raw.to_adata()
     sc.pp.normalize_total(adata)
-    sc.pp.log1p(adata)
+    if log:
+        sc.pp.log1p(adata)
     if scale:
-        if adata.shape[1]>7500:
+        if reduceForScale==True:
             sc.pp.highly_variable_genes(adata, min_mean=0.0125, max_mean=3, min_disp=0.5)
             #sc.pp.highly_variable_genes(adata, flavor='seurat_v3', n_top_genes=4000)
-            adata=adata[:,adata.var.highly_variable]
+            adata=adata[:,adata.var.highly_variable].copy()
+        elif type(reduceForScale)==int:
+            #sc.pp.highly_variable_genes(adata, min_mean=0.0125, max_mean=3, min_disp=0.5)
+            sc.pp.highly_variable_genes(adata, flavor='seurat_v3', n_top_genes=reduceForScale)
+            adata=adata[:,adata.var.highly_variable].copy()
         sc.pp.scale(adata)
     if pca:
         sc.tl.pca(adata, n_comps=n_comps)
@@ -161,6 +166,13 @@ def formatCellType(arr, cols, cellType):
     arr = np.vstack((arr, [cellType] * arr.shape[1]))
     return arr, cols
 
+def checkClusterInAdatas(adataList, cellType, obsKey='fineClusters'):
+    for adata in adataList:
+        if adata[adata.obs[obsKey]==cellType].shape[0]<2:
+            #print(adata[adata.obs[obsKey]==cellType].shape[0])
+            return False
+    return True
+    #return adata[adata.obs[obsKey]==cellType].shape[0]>1
 
 def doDGE(combinedData, treatments, obsKey='fineClusters'):
     ### Pass in large adata and treatments keys to access each batch
@@ -170,23 +182,42 @@ def doDGE(combinedData, treatments, obsKey='fineClusters'):
         print(treat1)
         for j, treat2 in enumerate(treatments):
             if j>i:
-                Data1 = combinedData[combinedData.obs['batch']==treat1]
-                Data2 = combinedData[combinedData.obs['batch']==treat2]
+                Data1 = combinedData[combinedData.obs['batch']==treat1].copy()
+                Data2 = combinedData[combinedData.obs['batch']==treat2].copy()
                 cellTypes = sorted(( set(np.unique(Data1.obs[obsKey])) & set(np.unique(Data2.obs[obsKey])) ))
-                adata = combinedData[(combinedData.obs['batch']==treat1) | (combinedData.obs['batch']==treat2)]
+                adata = combinedData[(combinedData.obs['batch']==treat1) | (combinedData.obs['batch']==treat2)].copy()
                 for celltype in cellTypes:
-                    dgeDF = getDEGsForCellType(adata, treat1, treat2, obsKey, celltype)
-                    dfs.append(dgeDF)
+                    #if (Data1[Data1.obs[obsKey]==celltype].shape[0]>1) and (Data2[Data2.obs[obsKey]==celltype].shape[0]>1):
+                    if checkClusterInAdatas([Data1,Data2], celltype, obsKey=obsKey):
+                        dgeDF = getDEGsForCellType(adata, treat1, treat2, obsKey, celltype)
+                        dfs.append(dgeDF)
     totalDF = pd.concat(dfs, ignore_index=True)
     return totalDF
 
 
 def getDEGsForCellType(adata, treat1, treat2, obsKey, celltype):
     print(f"{treat1} {treat2} {celltype}")
-    cellTypeAdata = adata[adata.obs[obsKey]==celltype]
+    cellTypeAdata = adata[adata.obs[obsKey]==celltype].copy()
     sc.tl.rank_genes_groups(cellTypeAdata, 'batch', groups=[treat2], reference=treat1, use_raw=False, method='wilcoxon', max_iter=2000, pts=False)
     dgeDF = tablize(cellTypeAdata, index=True, treatment=[treat1,treat2], cellType=celltype, counts=False)
     return dgeDF
+
+
+def logFoldByCell(adata, t1, t2, genes=None, foldDF=None):
+    ### Get the logfoldchange of a cell(s) given a treatment
+    ### foldDF should be 
+    if genes is not None:
+        adata = adata[:,genes]
+        if foldDF:
+            foldDF = foldDF[foldDF.genes]
+
+    if foldDF is None:
+        ### Calculate log fold changes on its own
+        pass
+
+    else:
+        pass
+
 
 ###################################################################################################
 ###################################################################################################
@@ -226,10 +257,14 @@ def addReadCounts(dgeDF, combinedData, treatments, obsKey='fineClusters'):
 def makeAvgReadDF(df, adata, obsKey='fineClusters'):
     arr=[]
     for cluster in np.unique(df['cellType']):
+        #print(cluster)
         if cluster in np.unique(adata.obs[obsKey]):
             arr.append(np.asarray(adata[adata.obs[obsKey]==cluster].X.mean(axis=0))[0])
+            #print(np.asarray(adata[adata.obs[obsKey]==cluster].X.mean(axis=0))[0])
         else:
             arr.append([np.nan]*df.shape[1])
+            #print([np.nan]*df.shape[1])
+
     meanMatrixDF = pd.DataFrame(arr, index=np.unique(df['cellType']), columns=adata.var.index)
     return meanMatrixDF
 
@@ -260,7 +295,7 @@ def filterDEGs(DGEDF, t1, t2, pvalThreshold=0.1, lfThreshold = 1.0):
     sigDF = sigDF[np.abs(sigDF.logfoldchanges)>lfThreshold]
     sigDF = sigDF[sigDF['baseTreatment'] == t1]
     sigDF = sigDF[sigDF['contrastTreatment'] == t2]
-    for i,t in enumerate(treatments):
+    for i,t in enumerate([t1,t2]):
         avgMask=(sigDF[t+'_AvgReadsPerCell']>0)
         mask = (sigDF['baseTreatment'] != t)
         sigDF = sigDF[(mask)|(avgMask)]
@@ -275,7 +310,7 @@ def numDEGs(DGEDF, t1, t2, cellTypes=None, doFilter=True):
         DGEDF = filterDEGs(DGEDF, t1, t2)
     DEGNumbers = []
     for cellType in cellTypes:
-        numDEGs = sigDF[sigDF['cellType']==cellType].shape[0]
+        numDEGs = DGEDF[DGEDF['cellType']==cellType].shape[0]
         DEGNumbers.append(numDEGs)
     return DEGNumbers
 

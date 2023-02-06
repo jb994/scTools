@@ -9,11 +9,13 @@ def fullFilterShebang(adata,
 				doFilter=True, 
 				doNorm=True, 
 				flavor='seurat', 
-				doMito=False, 
+				doMito=False, ,
+				doRibo=False,
 				doBlood=False, 
 				selectGenes=800):
 	if doFilter: filter(adata)
 	if doMito: adata = mitoFilter(adata, plot=plot)
+	if doRibo: adata = riboFilter(adata, plot=plot)
 	if doBlood: adata = bloodFilter(adata, plot=plot)
 	if doNorm: logNorm(adata)
 	adata = hvg(adata, flavor=flavor, plot=plot, selectGenes=selectGenes)
@@ -35,8 +37,8 @@ def filter(adata,
 	filter_genes(adata, min_cells=min_cells)
 
 
-def mitoFilter(adata,plot=True):
-	adata.var['mt'] = adata.var_names.str.startswith('MT-')
+def mitoFilter(adata, plot=True):
+	adata.var['mt'] = adata.var_names.str.startswith('mt-')
 	sc.pp.calculate_qc_metrics(adata, qc_vars=['mt'], percent_top=None, log1p=False, inplace=True)
 	if plot: sc.pl.violin(adata, ['n_genes_by_counts', 'total_counts', 'pct_counts_mt'],
              jitter=0.4, multi_panel=True)
@@ -44,7 +46,7 @@ def mitoFilter(adata,plot=True):
 	adata = adata[adata.obs.n_genes_by_counts < 2500, :]
 	return adata
 
-def riboFilter(adata,plot=True):
+def riboFilter(adata, plot=True):
 	adata.var['ribo'] = adata.var_names.str.startswith(("Rps","Rpl"))
 	sc.pp.calculate_qc_metrics(adata, qc_vars=['ribo'], percent_top=None, log1p=False, inplace=True)
 	if plot: sc.pl.violin(adata, ['n_genes_by_counts', 'total_counts', 'pct_counts_ribo'],
@@ -74,6 +76,35 @@ def hvg(adata, flavor='seurat', selectGenes=1000, plot=True):
 	if plot: sc.pl.highly_variable_genes(adata)
 	adata = adata[:, adata.var.highly_variable]
 	return adata
+
+def predictDoublet(adata, plot=True, showDoubletUMAP=True):
+	### Doublet Detection
+	import scrublet as scr
+
+	# split per batch into new objects.
+	batches = adata.obs['batch'].cat.categories.tolist()
+	alldata = {}
+	for batch in batches:
+	    tmp = adata[adata.obs['batch'] == batch,]
+	    print(batch, ":", tmp.shape[0], " cells")
+	    scrub = scr.Scrublet(tmp.raw.X)
+	    out = scrub.scrub_doublets(verbose=False, n_prin_comps = 20)
+	    alldata[batch] = pd.DataFrame({'doublet_score':out[0],'predicted_doublets':out[1]},index = tmp.obs.index)
+	    print(alldata[batch].predicted_doublets.sum(), " predicted_doublets")
+	    
+	scrub_pred = pd.concat(alldata.values())
+	adata.obs['doublet_scores'] = scrub_pred['doublet_score'] 
+	adata.obs['predicted_doublets'] = scrub_pred['predicted_doublets'] 
+
+	sum(adata.obs['predicted_doublets'])
+	%matplotlib inline
+
+	adata.obs['doublet_info'] = adata.obs["predicted_doublets"].astype(str)
+
+	if plot: sc.pl.violin(adata, 'n_genes_by_counts',
+	             jitter=0.4, groupby = 'doublet_info', rotation=45)
+	if showDoubletUMAP:
+		pass
 
 def doPCA(adata, n_components=50, plot=True, inplace=True):
 	if 'highly_variable' not in adata.var: 

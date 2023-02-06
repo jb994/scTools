@@ -24,7 +24,7 @@ def loadSTAR(path, subsample=None, seed=None, make_unique=False, labels=None):
 		path,
 		cache=True,
         make_unique=make_unique)
-	if labels is not None:
+	if labels is True:
 		cClust = pd.read_csv(path+'coarseClusters.csv', index_col=0)
 		adata.obs = pd.merge(adata.obs, cClust,left_index=True, right_index=True,how='left')
 		fClust = pd.read_csv(path+'fineClusters.csv', index_col=0)
