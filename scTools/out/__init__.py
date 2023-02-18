@@ -43,18 +43,21 @@ def makeSpreadsheet(df, filename=None, sheetKey = 'cellType', sortKey=None, colu
 	print(f"File {filename} created")
 
 
-def picsToSpreadsheet(spreadsheetPath, images, titles=["Sheet1"]):
+def picsToSpreadsheet(spreadsheetPath, images, spacing=12, titles=["Sheet1"]):
 	### images is a list of imagePaths or a list of lists for each sheet
 	### titles is a list of sheetTitles
 	wb=Workbook()
-	#ws=wb.active
 
 	for sheetIndex, title in enumerate(titles):
-		ws = wb.create_sheet(title=title)
+		if sheetIndex==0:
+			ws=wb.active
+			ws.title=title
+		else:
+			ws = wb.create_sheet(title=title)
 		if len(titles)==1: images = [images]
 		for i, image in enumerate(images[sheetIndex]):
 			img = Image(image)
-			ws.add_image(img, f'B{12*i+1}')
+			ws.add_image(img, f'B{spacing*i+1}')
 
 	wb.save(spreadsheetPath)
 

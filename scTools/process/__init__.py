@@ -147,6 +147,16 @@ def tablize(adata, index=None, treatment=None, cellType=None, counts=False):
     return pd.DataFrame((arr.T), index=index, columns=cols)
 
 
+def removeSingles(adata, key='fineClusters'):
+    ### Remove cells which are the only instance of a cluster in a certain treatment
+    ### Do this because it raises an error for scanpy
+    for batch in np.unique(adata.obs['batch']):
+        for cellType in np.unique(adata.obs[key]):
+            if adata[(adata.obs['batch']==batch) & (adata.obs[key]==cellType)].shape[0]==1:
+                adata = adata[~((adata.obs[key]==cellType) & (adata.obs['batch']==batch))]
+    return adata
+
+
 def formatTreatment(arr, cols, treatment):
     if type(treatment) == list:
         cols.append('treatment')
@@ -290,9 +300,9 @@ def appendReadsDF(df, meanMatrixDF, cellCountDF, treat):
 ###################################################################################################
 ###################################################################################################
 ###Functions to calculate the number of Differentially Expressed Genes (DEGs) between treatments###
-def filterDEGs(DGEDF, t1, t2, pvalThreshold=0.1, lfThreshold = 1.0):
+def filterDEGs(DGEDF, t1, t2, pvalThreshold=0.05, lfThreshold = 0.75):
     sigDF = DGEDF[DGEDF.pvals<=pvalThreshold]
-    sigDF = sigDF[np.abs(sigDF.logfoldchanges)>lfThreshold]
+    sigDF = sigDF[np.abs(sigDF.logfoldchanges)>=lfThreshold]
     sigDF = sigDF[sigDF['baseTreatment'] == t1]
     sigDF = sigDF[sigDF['contrastTreatment'] == t2]
     for i,t in enumerate([t1,t2]):
@@ -370,5 +380,6 @@ def enrich(glist, species='Mouse', analyses=None, treatment='', title_suffix='',
         dfs.append(enr_res.results)
     if return_df:
         return dfs
+
 
 

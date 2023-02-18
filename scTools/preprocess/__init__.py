@@ -9,7 +9,7 @@ def fullFilterShebang(adata,
 				doFilter=True, 
 				doNorm=True, 
 				flavor='seurat', 
-				doMito=False, ,
+				doMito=False,
 				doRibo=False,
 				doBlood=False, 
 				selectGenes=800):
@@ -97,7 +97,7 @@ def predictDoublet(adata, plot=True, showDoubletUMAP=True):
 	adata.obs['predicted_doublets'] = scrub_pred['predicted_doublets'] 
 
 	sum(adata.obs['predicted_doublets'])
-	%matplotlib inline
+	#%matplotlib inline
 
 	adata.obs['doublet_info'] = adata.obs["predicted_doublets"].astype(str)
 
